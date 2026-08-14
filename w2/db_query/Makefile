@@ -1,4 +1,4 @@
-.PHONY: help install dev backend frontend test lint format clean db-migrate db-upgrade db-downgrade
+.PHONY: help install dev backend frontend test lint format clean db-migrate db-upgrade db-downgrade export-csv export-json auto-export export-stats export-history test-export
 
 # Variables
 BACKEND_DIR = backend
@@ -182,3 +182,47 @@ update: update-backend update-frontend ## Update all dependencies
 check: lint test ## Run lint and tests
 
 ci: install lint test ## Run CI checks (install, lint, test)
+
+# AI智能导出相关命令
+export-csv: ## Export query result as CSV (requires DB and SQL variables)
+	@if [ -z "$(DB)" ] || [ -z "$(SQL)" ]; then \
+		echo "$(YELLOW)Usage: make export-csv DB=<database_name> SQL=\"<query>\"$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Exporting as CSV...$(NC)"
+	@echo "Database: $(DB)"
+	@echo "Query: $(SQL)"
+	cd $(BACKEND_DIR) && $(UV) run python -c "from app.workflows.export_workflow import export_workflow; import asyncio; result = asyncio.run(export_workflow.export_to_csv_mock('$(DB)', '$(SQL)')); print(f'Export completed: {result}')"
+
+export-json: ## Export query result as JSON (requires DB and SQL variables)
+	@if [ -z "$(DB)" ] || [ -z "$(SQL)" ]; then \
+		echo "$(YELLOW)Usage: make export-json DB=<database_name> SQL=\"<query>\"$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Exporting as JSON...$(NC)"
+	@echo "Database: $(DB)"
+	@echo "Query: $(SQL)"
+	cd $(BACKEND_DIR) && $(UV) run python -c "from app.workflows.export_workflow import export_workflow; import asyncio; result = asyncio.run(export_workflow.export_to_json_mock('$(DB)', '$(SQL)')); print(f'Export completed: {result}')"
+
+auto-export: ## Smart auto-export with AI format recommendation
+	@if [ -z "$(DB)" ] || [ -z "$(SQL)" ]; then \
+		echo "$(YELLOW)Usage: make auto-export DB=<database_name> SQL=\"<query>\" [FORMAT=<csv|json>] [FORCE=1]$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)🤖 AI Smart Auto-Export...$(NC)"
+	@echo "Database: $(DB)"
+	@echo "Query: $(SQL)"
+	@echo "Format: $(FORMAT:-auto)"
+	cd $(BACKEND_DIR) && $(UV) run python -c "from app.workflows.export_workflow import export_workflow; from app.services.export_analyzer import export_analyzer; import asyncio; result = asyncio.run(export_workflow.smart_export_mock('$(DB)', '$(SQL)', '$(FORMAT:-auto)', $(FORCE:-0))); print(result)"
+
+export-stats: ## Show export statistics
+	@echo "$(BLUE)📊 Export Statistics$(NC)"
+	cd $(BACKEND_DIR) && $(UV) run python -c "from app.workflows.export_workflow import export_workflow; stats = export_workflow.get_export_statistics(); print('Total Exports:', stats['total_exports']); print('CSV Exports:', stats['csv_exports']); print('JSON Exports:', stats['json_exports']); print('Avg Export Time:', stats['avg_export_time_ms'], 'ms'); print('Total Rows Exported:', stats['total_rows_exported'])"
+
+export-history: ## Show export history (last N entries)
+	@echo "$(BLUE)📋 Export History$(NC)"
+	cd $(BACKEND_DIR) && $(UV) run python -c "from app.workflows.export_workflow import export_workflow; history = export_workflow.get_export_history($(LIMIT:-10)); [print(f\"{h['timestamp'][:19]} | {h['database_name']:15} | {h['format']:4} | {h['row_count']:6} rows | {h['export_time_ms']:4}ms\") for h in history]"
+
+test-export: ## Run export-related tests
+	@echo "$(BLUE)Running export tests...$(NC)"
+	cd $(BACKEND_DIR) && $(UV) run pytest tests/unit/test_export_analyzer.py tests/integration/test_export_workflow.py -v

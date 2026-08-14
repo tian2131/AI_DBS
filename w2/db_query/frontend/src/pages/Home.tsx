@@ -14,14 +14,12 @@ import {
   Typography,
   Empty,
   Tabs,
-  Modal,
 } from "antd";
 import {
   PlayCircleOutlined,
   SearchOutlined,
   DatabaseOutlined,
   ReloadOutlined,
-  ExclamationCircleOutlined,
 } from "@ant-design/icons";
 import { apiClient } from "../services/api";
 import { DatabaseMetadata, TableMetadata } from "../types/metadata";
@@ -29,6 +27,7 @@ import { MetadataTree } from "../components/MetadataTree";
 import { SqlEditor } from "../components/SqlEditor";
 import { DatabaseSidebar } from "../components/DatabaseSidebar";
 import { NaturalLanguageInput } from "../components/NaturalLanguageInput";
+import { SmartExportButton } from "../components/SmartExportButton";
 
 const { Title, Text } = Typography;
 
@@ -134,91 +133,6 @@ export const Home: React.FC = () => {
     } finally {
       setGeneratingSql(false);
     }
-  };
-
-  const handleExportCSV = () => {
-    if (!queryResult || queryResult.rows.length === 0) {
-      message.warning("No data to export");
-      return;
-    }
-
-    // Warn if result is large
-    if (queryResult.rows.length > 10000) {
-      Modal.confirm({
-        title: "Large Dataset Warning",
-        icon: <ExclamationCircleOutlined />,
-        content: `You are about to export ${queryResult.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
-        onOk: () => exportToCSV(),
-      });
-    } else {
-      exportToCSV();
-    }
-  };
-
-  const exportToCSV = () => {
-    if (!queryResult) return;
-
-    // Generate CSV content
-    const headers = queryResult.columns.map((col) => col.name);
-    const csvRows = [headers.join(",")];
-
-    queryResult.rows.forEach((row) => {
-      const values = headers.map((header) => {
-        const value = row[header];
-        // Handle null/undefined
-        if (value === null || value === undefined) return "";
-        // Escape quotes and wrap in quotes if contains comma or quote
-        const stringValue = String(value);
-        if (stringValue.includes(",") || stringValue.includes('"') || stringValue.includes("\n")) {
-          return `"${stringValue.replace(/"/g, '""')}"`;
-        }
-        return stringValue;
-      });
-      csvRows.push(values.join(","));
-    });
-
-    const csvContent = csvRows.join("\n");
-    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
-    link.href = URL.createObjectURL(blob);
-    link.download = `${selectedDatabase}_${timestamp}.csv`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    message.success(`Exported ${queryResult.rowCount} rows to CSV`);
-  };
-
-  const handleExportJSON = () => {
-    if (!queryResult || queryResult.rows.length === 0) {
-      message.warning("No data to export");
-      return;
-    }
-
-    // Warn if result is large
-    if (queryResult.rows.length > 10000) {
-      Modal.confirm({
-        title: "Large Dataset Warning",
-        icon: <ExclamationCircleOutlined />,
-        content: `You are about to export ${queryResult.rowCount.toLocaleString()} rows. This may take a while and consume memory. Continue?`,
-        onOk: () => exportToJSON(),
-      });
-    } else {
-      exportToJSON();
-    }
-  };
-
-  const exportToJSON = () => {
-    if (!queryResult) return;
-
-    const jsonContent = JSON.stringify(queryResult.rows, null, 2);
-    const blob = new Blob([jsonContent], { type: "application/json;charset=utf-8;" });
-    const link = document.createElement("a");
-    const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, -5);
-    link.href = URL.createObjectURL(blob);
-    link.download = `${selectedDatabase}_${timestamp}.json`;
-    link.click();
-    URL.revokeObjectURL(link.href);
-    message.success(`Exported ${queryResult.rowCount} rows to JSON`);
   };
 
   const tableColumns =
@@ -623,21 +537,15 @@ export const Home: React.FC = () => {
               </Space>
             }
             extra={
-              <Space size={8}>
-                <Button
-                  size="small"
-                  onClick={handleExportCSV}
-                  style={{ fontSize: 12, fontWeight: 700 }}
-                >
-                  EXPORT CSV
-                </Button>
-                <Button
-                  size="small"
-                  onClick={handleExportJSON}
-                  style={{ fontSize: 12, fontWeight: 700 }}
-                >
-                  EXPORT JSON
-                </Button>
+              <Space size={12}>
+                <SmartExportButton
+                  queryResult={queryResult}
+                  databaseName={selectedDatabase}
+                  loading={executing}
+                  onExportComplete={(format, rowCount) => {
+                    message.success(`Exported ${rowCount} rows as ${format.toUpperCase()}`);
+                  }}
+                />
               </Space>
             }
             style={{ borderWidth: 2, borderColor: "#000000" }}

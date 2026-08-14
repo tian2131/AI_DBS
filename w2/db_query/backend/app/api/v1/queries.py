@@ -1,6 +1,7 @@
 """Query execution API endpoints."""
 
 import json
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 from typing import List
@@ -13,12 +14,17 @@ from app.models.schemas import (
     QueryHistoryEntry,
     NaturalLanguageInput,
     GeneratedSqlResponse,
+    ExportSuggestion,
+    ExportRequest,
+    ExportResult,
 )
 from app.services.query_wrapper import execute_query_with_service
 from app.services.query import get_query_history
 from app.services.sql_validator import SqlValidationError
 from app.services.nl2sql import nl2sql_service
 from app.services.metadata import get_cached_metadata
+from app.services.export_analyzer import export_analyzer
+from app.workflows.export_workflow import export_workflow
 
 router = APIRouter(prefix="/api/v1/dbs", tags=["queries"])
 
@@ -179,4 +185,122 @@ async def natural_language_to_sql(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to generate SQL: {str(e)}",
+        )
+
+
+@router.post("/{name}/query/suggest-export", response_model=ExportSuggestion)
+async def get_export_suggestion(
+    name: str,
+    query_input: QueryInput,
+    session: Session = Depends(get_session),
+) -> ExportSuggestion:
+    """
+    Get AI-powered export suggestion based on query result.
+
+    Args:
+        name: Database connection name
+        query_input: Query input with SQL
+        session: Database session
+
+    Returns:
+        Export suggestion with recommended format and reasoning
+    """
+    # Get connection
+    statement = select(DatabaseConnection).where(DatabaseConnection.name == name)
+    connection = session.exec(statement).first()
+
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database connection '{name}' not found",
+        )
+
+    # Execute query to get result
+    try:
+        result = await execute_query_with_service(
+            session,
+            name,
+            connection.db_type,
+            connection.url,
+            query_input.sql,
+            QuerySource.MANUAL,
+        )
+    except SqlValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Query execution failed: {str(e)}",
+        )
+
+    # Generate AI export suggestion
+    try:
+        suggestion = export_analyzer.analyze_export_need(result)
+        return ExportSuggestion(
+            recommendedFormat=suggestion.recommended_format,
+            confidenceScore=suggestion.confidence_score,
+            reasoning=suggestion.reasoning,
+            estimatedSizeMb=suggestion.estimated_size_mb,
+            exportTimeEstimateMs=suggestion.export_time_estimate_ms,
+            automationSuggestion=suggestion.automation_suggestion,
+            alternativeFormats=suggestion.alternative_formats,
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate export suggestion: {str(e)}",
+        )
+
+
+@router.post("/{name}/query/auto-export", response_model=ExportResult)
+async def auto_export(
+    name: str,
+    export_request: ExportRequest,
+    session: Session = Depends(get_session),
+) -> ExportResult:
+    """
+    Execute query and automatically export with AI-chosen format.
+
+    Args:
+        name: Database connection name
+        export_request: Export configuration
+        session: Database session
+
+    Returns:
+        Export result with file information
+    """
+    # Get connection
+    statement = select(DatabaseConnection).where(DatabaseConnection.name == name)
+    connection = session.exec(statement).first()
+
+    if not connection:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Database connection '{name}' not found",
+        )
+
+    # Use automated export workflow
+    try:
+        result = await export_workflow.execute_and_export(
+            session=session,
+            database_name=name,
+            db_type=connection.db_type,
+            url=connection.url,
+            sql=export_request.sql,
+            auto_export=export_request.auto_export,
+            preferred_format=export_request.format if export_request.format != "auto" else None,
+        )
+        return result
+    except SqlValidationError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Auto export failed: {str(e)}",
         )

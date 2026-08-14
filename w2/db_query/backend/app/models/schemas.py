@@ -118,3 +118,49 @@ class ErrorResponse(BaseModel):
     """Error response schema."""
 
     error: dict[str, Any]
+
+
+# Export Schemas
+class ExportAnalysis(BaseModel):
+    """Export analysis result schema."""
+
+    row_count: int = Field(..., alias="rowCount")
+    column_count: int = Field(..., alias="columnCount")
+    data_type_distribution: dict[str, int] = Field(..., alias="dataTypeDistribution")
+    has_null_values: bool = Field(..., alias="hasNullValues")
+    has_special_characters: bool = Field(..., alias="hasSpecialCharacters")
+    estimated_csv_size_bytes: int = Field(..., alias="estimatedCsvSizeBytes")
+    estimated_json_size_bytes: int = Field(..., alias="estimatedJsonSizeBytes")
+    complexity_score: float = Field(..., alias="complexityScore")
+
+
+class ExportSuggestion(BaseModel):
+    """Export suggestion schema."""
+
+    recommended_format: str = Field(..., alias="recommendedFormat")
+    confidence_score: float = Field(..., alias="confidenceScore")
+    reasoning: str
+    estimated_size_mb: float = Field(..., alias="estimatedSizeMb")
+    export_time_estimate_ms: int = Field(..., alias="exportTimeEstimateMs")
+    automation_suggestion: str = Field(..., alias="automationSuggestion")
+    alternative_formats: list[str] = Field(..., alias="alternativeFormats")
+
+
+class ExportRequest(BaseModel):
+    """Export request schema."""
+
+    sql: str = Field(..., description="SQL query to execute and export")
+    format: str = Field(default="csv", description="Export format (csv or json)")
+    auto_export: bool = Field(default=False, description="Enable automatic export")
+
+
+class ExportResult(BaseModel):
+    """Export result schema."""
+
+    success: bool
+    file_url: str | None = Field(default=None, alias="fileUrl")
+    file_size: int | None = Field(default=None, alias="fileSize")
+    format: str
+    row_count: int = Field(..., alias="rowCount")
+    export_time_ms: int = Field(..., alias="exportTimeMs")
+    error: str | None = Field(default=None)
