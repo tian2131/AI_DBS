@@ -257,8 +257,9 @@ def configure_logging(
     for handler in root_logger.handlers[:]:
         root_logger.removeHandler(handler)
 
-    # Create console handler
-    handler = logging.StreamHandler(sys.stdout)
+    # Create console handler on stderr: stdout is reserved for the MCP
+    # stdio JSON-RPC protocol, log lines there would corrupt the stream.
+    handler = logging.StreamHandler(sys.stderr)
 
     # Set formatter
     formatter: logging.Formatter
