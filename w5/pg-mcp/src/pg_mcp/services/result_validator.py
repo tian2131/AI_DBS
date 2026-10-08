@@ -55,6 +55,7 @@ class ResultValidator:
         self.validation_config = validation_config
         self.client = AsyncOpenAI(
             api_key=openai_config.api_key.get_secret_value(),
+            base_url=openai_config.base_url,
             timeout=validation_config.timeout_seconds,
         )
 
@@ -124,7 +125,7 @@ class ResultValidator:
                     {"role": "system", "content": RESULT_VALIDATION_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
-                max_tokens=500,
+                max_tokens=2000,  # Ample headroom: reasoning models spend tokens before JSON output
                 temperature=0.0,  # Use deterministic output for validation
                 response_format={"type": "json_object"},  # Ensure JSON response
             )
