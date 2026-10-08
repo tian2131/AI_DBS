@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "pg-mcp": {
+      "command": "C:\\Users\\Administrator\\.local\\bin\\uv.exe",
+      "args": [
+        "--directory",
+        "C:\\Users\\Administrator\\AI_DBS\\w5\\pg-mcp",
+        "run",
+        "python",
+        "-m",
+        "pg_mcp"
+      ]
+    }
+  }
+}
