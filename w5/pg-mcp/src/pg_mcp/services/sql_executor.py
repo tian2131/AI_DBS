@@ -7,6 +7,7 @@ result serialization, and row limiting to prevent memory overflow.
 import asyncio
 import datetime
 import decimal
+import time
 import uuid
 from typing import Any
 
@@ -15,6 +16,7 @@ from asyncpg import Connection, Pool
 
 from pg_mcp.config.settings import DatabaseConfig, SecurityConfig
 from pg_mcp.models.errors import DatabaseError, ExecutionTimeoutError
+from pg_mcp.observability.metrics import metrics
 
 
 class SQLExecutor:
@@ -100,6 +102,7 @@ class SQLExecutor:
                 await self._set_session_params(connection, timeout)
 
                 # Execute query with timeout
+                db_start = time.monotonic()
                 try:
                     records = await asyncio.wait_for(
                         connection.fetch(sql),
@@ -113,6 +116,7 @@ class SQLExecutor:
                             "sql": sql[:200],  # Include truncated SQL for debugging
                         },
                     ) from e
+                metrics.observe_db_query_duration(time.monotonic() - db_start)
 
                 # Track total count before limiting
                 total_count = len(records)

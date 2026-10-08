@@ -105,6 +105,16 @@ class SchemaCache:
         schema = await introspector.introspect()
 
         if self.config.enabled:
+            # Enforce max_size: evict the oldest entry when inserting a new key
+            if (
+                len(self._cache) >= self.config.max_size
+                and database_name not in self._cache
+            ):
+                oldest = min(
+                    self._cache_timestamps, key=lambda name: self._cache_timestamps[name]
+                )
+                self._cache.pop(oldest, None)
+                self._cache_timestamps.pop(oldest, None)
             self._cache[database_name] = schema
             self._cache_timestamps[database_name] = datetime.now(UTC)
 

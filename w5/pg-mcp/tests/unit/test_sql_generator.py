@@ -281,6 +281,7 @@ class TestSQLGenerator:
     ) -> None:
         """Test simple query generation with mocked OpenAI response."""
         mock_response = MagicMock()
+        mock_response.usage = None
         mock_response.choices = [
             MagicMock(message=MagicMock(content="```sql\nSELECT * FROM users;\n```"))
         ]
@@ -310,6 +311,7 @@ class TestSQLGenerator:
     ) -> None:
         """Test generation with additional context."""
         mock_response = MagicMock()
+        mock_response.usage = None
         mock_response.choices = [
             MagicMock(
                 message=MagicMock(
@@ -336,6 +338,7 @@ class TestSQLGenerator:
     ) -> None:
         """Test generation with retry context (previous attempt + error)."""
         mock_response = MagicMock()
+        mock_response.usage = None
         mock_response.choices = [
             MagicMock(message=MagicMock(content="```sql\nSELECT COUNT(*) FROM users;\n```"))
         ]
@@ -410,6 +413,7 @@ class TestSQLGenerator:
     ) -> None:
         """Test handling of empty response from OpenAI."""
         mock_response = MagicMock()
+        mock_response.usage = None
         mock_response.choices = []
 
         with patch.object(
@@ -426,6 +430,7 @@ class TestSQLGenerator:
     ) -> None:
         """Test handling of empty message content."""
         mock_response = MagicMock()
+        mock_response.usage = None
         mock_response.choices = [MagicMock(message=MagicMock(content=None))]
 
         with patch.object(
@@ -442,6 +447,7 @@ class TestSQLGenerator:
     ) -> None:
         """Test handling when SQL cannot be extracted from response."""
         mock_response = MagicMock()
+        mock_response.usage = None
         mock_response.choices = [
             MagicMock(message=MagicMock(content="I cannot generate a query for this request."))
         ]
@@ -472,6 +478,7 @@ ORDER BY ro.order_count DESC
 LIMIT 10;"""
 
         mock_response = MagicMock()
+        mock_response.usage = None
         mock_response.choices = [MagicMock(message=MagicMock(content=f"```sql\n{cte_sql}\n```"))]
 
         with patch.object(
@@ -497,6 +504,7 @@ LIMIT 10;"""
         generator = SQLGenerator(custom_config)
 
         mock_response = MagicMock()
+        mock_response.usage = None
         mock_response.choices = [MagicMock(message=MagicMock(content="```sql\nSELECT 1;\n```"))]
 
         with patch.object(
@@ -515,6 +523,7 @@ LIMIT 10;"""
     ) -> None:
         """Test that schema context is included in the prompt."""
         mock_response = MagicMock()
+        mock_response.usage = None
         mock_response.choices = [MagicMock(message=MagicMock(content="```sql\nSELECT 1;\n```"))]
 
         with patch.object(
@@ -545,3 +554,37 @@ LIMIT 10;"""
 
             assert "OpenAI API request failed" in str(exc_info.value)
             assert exc_info.value.details["error"] == "Unknown error occurred"
+
+    @pytest.mark.asyncio
+    async def test_generate_captures_token_usage(
+        self, generator: SQLGenerator, mock_schema: DatabaseSchema
+    ) -> None:
+        """Test token usage from the response is stored on the generator."""
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content="```sql\nSELECT 1;\n```"))]
+        mock_response.usage = MagicMock(total_tokens=321)
+
+        with patch.object(
+            generator.client.chat.completions, "create", new=AsyncMock(return_value=mock_response)
+        ):
+            await generator.generate("Count users", mock_schema)
+
+        assert generator.last_tokens_used == 321
+
+    @pytest.mark.asyncio
+    async def test_generate_resets_tokens_before_call(
+        self, generator: SQLGenerator, mock_schema: DatabaseSchema
+    ) -> None:
+        """Test token usage is reset at the start of each generate call."""
+        generator.last_tokens_used = 999
+
+        mock_response = MagicMock()
+        mock_response.choices = [MagicMock(message=MagicMock(content="```sql\nSELECT 1;\n```"))]
+        mock_response.usage = None
+
+        with patch.object(
+            generator.client.chat.completions, "create", new=AsyncMock(return_value=mock_response)
+        ):
+            await generator.generate("Count users", mock_schema)
+
+        assert generator.last_tokens_used is None

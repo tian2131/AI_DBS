@@ -17,7 +17,13 @@ from pg_mcp.models.errors import (
     SecurityViolationError,
     SQLParseError,
 )
-from pg_mcp.models.query import QueryRequest, QueryResponse, QueryResult, ReturnType
+from pg_mcp.models.query import (
+    ErrorDetail,
+    QueryRequest,
+    QueryResponse,
+    QueryResult,
+    ReturnType,
+)
 from pg_mcp.models.schema import (
     ColumnInfo,
     DatabaseSchema,
@@ -369,6 +375,44 @@ class TestQueryResponse:
         assert response.success
         assert response.generated_sql is not None
         assert response.data is None
+
+    def test_to_dict_excludes_none_fields(self) -> None:
+        """Test to_dict omits None-valued fields."""
+        response = QueryResponse(success=True, generated_sql="SELECT 1;")
+        d = response.to_dict()
+        assert "data" not in d
+        assert "error" not in d
+        assert "validation" not in d
+        assert d["generated_sql"] == "SELECT 1;"
+        assert d["success"] is True
+
+    def test_to_dict_tokens_used_defaults_to_zero(self) -> None:
+        """Test to_dict keeps tokens_used present (0) even when unknown."""
+        response = QueryResponse(success=True, generated_sql="SELECT 1;")
+        d = response.to_dict()
+        assert d["tokens_used"] == 0
+
+    def test_to_dict_tokens_used_preserved_when_set(self) -> None:
+        """Test to_dict forwards actual token usage."""
+        response = QueryResponse(success=True, generated_sql="SELECT 1;", tokens_used=123)
+        d = response.to_dict()
+        assert d["tokens_used"] == 123
+
+    def test_to_dict_error_shape(self) -> None:
+        """Test to_dict serializes error details for failed responses."""
+        response = QueryResponse(
+            success=False,
+            error=ErrorDetail(
+                code=ErrorCode.DATABASE_ERROR,
+                message="Connection failed",
+                details={"database": "mydb"},
+            ),
+        )
+        d = response.to_dict()
+        assert d["success"] is False
+        assert d["error"]["code"] == ErrorCode.DATABASE_ERROR
+        assert d["error"]["message"] == "Connection failed"
+        assert d["error"]["details"] == {"database": "mydb"}
 
 
 class TestErrorModels:

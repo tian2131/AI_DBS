@@ -17,9 +17,6 @@ from pg_mcp.config.settings import Settings
 from pg_mcp.db.pool import close_pools, create_pool
 from pg_mcp.models.query import QueryRequest, QueryResponse, ReturnType
 from pg_mcp.observability.logging import configure_logging, get_logger
-from pg_mcp.observability.metrics import MetricsCollector
-from pg_mcp.resilience.circuit_breaker import CircuitBreaker
-from pg_mcp.resilience.rate_limiter import MultiRateLimiter
 from pg_mcp.services.orchestrator import QueryOrchestrator
 from pg_mcp.services.result_validator import ResultValidator
 from pg_mcp.services.sql_executor import SQLExecutor
@@ -33,9 +30,6 @@ _settings: Settings | None = None
 _pools: dict[str, Pool] | None = None
 _schema_cache: SchemaCache | None = None
 _orchestrator: QueryOrchestrator | None = None
-_metrics: MetricsCollector | None = None
-_circuit_breaker: CircuitBreaker | None = None
-_rate_limiter: MultiRateLimiter | None = None
 
 
 @asynccontextmanager
@@ -49,11 +43,9 @@ async def lifespan(_app: FastMCP) -> AsyncIterator[None]:  # type: ignore[type-a
         2. Configure logging
         3. Create database connection pools
         4. Load schema cache for all databases
-        5. Initialize metrics collector
+        5. Start metrics HTTP server (exposes the global metrics registry)
         6. Create service components (generators, validators, executors)
-        7. Initialize resilience components (circuit breaker, rate limiter)
-        8. Create query orchestrator
-        9. Start metrics HTTP server (optional)
+        7. Create query orchestrator (owns circuit breaker and rate limiters)
 
     Shutdown:
         1. Stop schema auto-refresh (if enabled)
@@ -68,8 +60,7 @@ async def lifespan(_app: FastMCP) -> AsyncIterator[None]:  # type: ignore[type-a
         ...     # Server is running with all components initialized
         ...     pass
     """
-    global _settings, _pools, _schema_cache, _orchestrator, _metrics
-    global _circuit_breaker, _rate_limiter
+    global _settings, _pools, _schema_cache, _orchestrator
 
     logger.info("Starting PostgreSQL MCP Server initialization...")
 
@@ -132,11 +123,7 @@ async def lifespan(_app: FastMCP) -> AsyncIterator[None]:  # type: ignore[type-a
         #         pools=_pools,
         #     )
 
-        # 5. Initialize metrics collector
-        logger.info("Initializing metrics collector...")
-        _metrics = MetricsCollector()
-
-        # Start metrics HTTP server if enabled
+        # 5. Start metrics HTTP server (exposes the global metrics registry)
         if _settings.observability.metrics_enabled:
             from prometheus_client import start_http_server
 
@@ -149,12 +136,12 @@ async def lifespan(_app: FastMCP) -> AsyncIterator[None]:  # type: ignore[type-a
         # SQL Generator
         sql_generator = SQLGenerator(_settings.openai)
 
-        # SQL Validator
+        # SQL Validator (security controls come from configuration)
         sql_validator = SQLValidator(
             config=_settings.security,
-            blocked_tables=None,  # Can be configured via settings if needed
-            blocked_columns=None,  # Can be configured via settings if needed
-            allow_explain=False,
+            blocked_tables=_settings.security.blocked_tables,
+            blocked_columns=_settings.security.blocked_columns,
+            allow_explain=_settings.security.allow_explain,
         )
 
         # SQL Executor (create one per database)
@@ -174,27 +161,12 @@ async def lifespan(_app: FastMCP) -> AsyncIterator[None]:  # type: ignore[type-a
             validation_config=_settings.validation,
         )
 
-        # 7. Initialize resilience components
-        logger.info("Initializing resilience components...")
-
-        # Circuit Breaker for LLM calls
-        _circuit_breaker = CircuitBreaker(
-            failure_threshold=_settings.resilience.circuit_breaker_threshold,
-            recovery_timeout=_settings.resilience.circuit_breaker_timeout,
-        )
-
-        # Rate Limiter
-        _rate_limiter = MultiRateLimiter(
-            query_limit=10,  # Can be made configurable
-            llm_limit=5,  # Can be made configurable
-        )
-
-        # 8. Create QueryOrchestrator
+        # 7. Create QueryOrchestrator (owns circuit breaker and rate limiters)
         logger.info("Creating query orchestrator...")
         _orchestrator = QueryOrchestrator(
             sql_generator=sql_generator,
             sql_validator=sql_validator,
-            sql_executor=sql_executors[_settings.database.name],  # Use primary executor
+            sql_executors=sql_executors,
             result_validator=result_validator,
             schema_cache=_schema_cache,
             pools=_pools,
@@ -355,11 +327,8 @@ async def query(
     # Execute query through orchestrator
     try:
         response: QueryResponse = await _orchestrator.execute_query(request)
-        result = response.to_dict()
-        # Ensure tokens_used is always present
-        if "tokens_used" not in result:
-            result["tokens_used"] = 0
-        return result
+        # to_dict always includes tokens_used (0 when unknown)
+        return response.to_dict()
     except Exception as e:
         logger.exception("Unexpected error in query tool")
         return {

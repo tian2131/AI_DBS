@@ -14,14 +14,16 @@ Example:
     >>> # Start metrics server
     >>> metrics.start_metrics_server(9090)
     >>>
-    >>> # Use request tracing
+    >>> # Use request tracing: the request ID is injected into every log
+    >>> # record automatically via RequestIdFilter
     >>> async with request_context() as request_id:
     ...     metrics.increment_query_request(status="success", database="mydb")
-    ...     logger.info("Query completed", extra={"request_id": request_id})
+    ...     logger.info("Query completed")
 """
 
 from pg_mcp.observability.logging import (
     JSONFormatter,
+    RequestIdFilter,
     SensitiveDataFilter,
     TextFormatter,
     configure_logging,
@@ -30,15 +32,11 @@ from pg_mcp.observability.logging import (
 from pg_mcp.observability.metrics import MetricsCollector, metrics
 from pg_mcp.observability.tracing import (
     TraceContext,
-    TracingLogger,
     clear_request_id,
     generate_request_id,
     get_request_id,
-    get_tracing_logger,
     request_context,
     set_request_id,
-    trace_async,
-    trace_sync,
 )
 
 __all__ = [
@@ -51,15 +49,12 @@ __all__ = [
     "JSONFormatter",
     "TextFormatter",
     "SensitiveDataFilter",
+    "RequestIdFilter",
     # Tracing
     "request_context",
     "generate_request_id",
     "get_request_id",
     "set_request_id",
     "clear_request_id",
-    "trace_async",
-    "trace_sync",
     "TraceContext",
-    "TracingLogger",
-    "get_tracing_logger",
 ]

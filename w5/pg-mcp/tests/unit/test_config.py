@@ -184,6 +184,37 @@ class TestSecurityConfig:
         config = SecurityConfig(allow_write_operations=True)
         assert config.allow_write_operations is True
 
+    def test_blocked_tables_and_columns_default_empty(self) -> None:
+        """Test blocked tables/columns default to empty lists."""
+        config = SecurityConfig()
+        assert config.blocked_tables == []
+        assert config.blocked_columns == []
+
+    def test_blocked_tables_from_list(self) -> None:
+        """Test blocked tables passed as a list."""
+        config = SecurityConfig(blocked_tables=["secret_table"])
+        assert config.blocked_tables == ["secret_table"]
+
+    def test_blocked_tables_from_csv_string(self) -> None:
+        """Test blocked tables parsed from comma-separated string."""
+        config = SecurityConfig(blocked_tables="t1, t2 ,t3")  # type: ignore
+        assert config.blocked_tables == ["t1", "t2", "t3"]
+
+    def test_blocked_columns_from_csv_string(self) -> None:
+        """Test blocked columns parsed from comma-separated string."""
+        config = SecurityConfig(blocked_columns="password, ssn")  # type: ignore
+        assert config.blocked_columns == ["password", "ssn"]
+
+    def test_allow_explain_default_false(self) -> None:
+        """Test EXPLAIN is disallowed by default."""
+        config = SecurityConfig()
+        assert config.allow_explain is False
+
+    def test_allow_explain_enabled(self) -> None:
+        """Test EXPLAIN can be explicitly enabled."""
+        config = SecurityConfig(allow_explain=True)
+        assert config.allow_explain is True
+
     def test_invalid_max_rows(self) -> None:
         """Test invalid max_rows is rejected."""
         with pytest.raises(ValidationError):
@@ -261,6 +292,9 @@ class TestResilienceConfig:
         assert config.backoff_factor == 2.0
         assert config.circuit_breaker_threshold == 5
         assert config.circuit_breaker_timeout == 60.0
+        assert config.query_concurrency == 10
+        assert config.llm_concurrency == 5
+        assert config.rate_limit_wait == 5.0
 
     def test_custom_values(self) -> None:
         """Test custom configuration values."""
@@ -268,10 +302,16 @@ class TestResilienceConfig:
             max_retries=5,
             retry_delay=2.0,
             backoff_factor=3.0,
+            query_concurrency=20,
+            llm_concurrency=8,
+            rate_limit_wait=10.0,
         )
         assert config.max_retries == 5
         assert config.retry_delay == 2.0
         assert config.backoff_factor == 3.0
+        assert config.query_concurrency == 20
+        assert config.llm_concurrency == 8
+        assert config.rate_limit_wait == 10.0
 
     def test_invalid_values(self) -> None:
         """Test invalid values are rejected."""
@@ -280,6 +320,22 @@ class TestResilienceConfig:
 
         with pytest.raises(ValidationError):
             ResilienceConfig(backoff_factor=0.5)
+
+    def test_invalid_concurrency_values(self) -> None:
+        """Test concurrency limits below 1 are rejected."""
+        with pytest.raises(ValidationError):
+            ResilienceConfig(query_concurrency=0)
+
+        with pytest.raises(ValidationError):
+            ResilienceConfig(llm_concurrency=0)
+
+    def test_invalid_rate_limit_wait(self) -> None:
+        """Test rate_limit_wait outside [0.1, 60] is rejected."""
+        with pytest.raises(ValidationError):
+            ResilienceConfig(rate_limit_wait=0.05)
+
+        with pytest.raises(ValidationError):
+            ResilienceConfig(rate_limit_wait=61.0)
 
 
 class TestObservabilityConfig:

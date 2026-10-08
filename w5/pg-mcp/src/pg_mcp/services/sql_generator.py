@@ -5,12 +5,14 @@ natural language questions into valid PostgreSQL SQL queries.
 """
 
 import re
+import time
 from typing import TYPE_CHECKING
 
 from openai import AsyncOpenAI
 
 from pg_mcp.config.settings import OpenAIConfig
 from pg_mcp.models.errors import LLMError, LLMTimeoutError, LLMUnavailableError
+from pg_mcp.observability.metrics import metrics
 from pg_mcp.prompts.sql_generation import SQL_GENERATION_SYSTEM_PROMPT, build_user_prompt
 
 if TYPE_CHECKING:
@@ -47,6 +49,8 @@ class SQLGenerator:
             base_url=config.base_url,
             timeout=config.timeout,
         )
+        # Token usage of the most recent generate() call (None until one succeeds)
+        self.last_tokens_used: int | None = None
 
     async def generate(
         self,
@@ -99,6 +103,9 @@ class SQLGenerator:
             error_feedback=error_feedback,
         )
 
+        self.last_tokens_used = None
+        metrics.increment_llm_call("sql_generation")
+        llm_start = time.monotonic()
         try:
             response: ChatCompletion = await self.client.chat.completions.create(
                 model=self.config.model,
@@ -131,6 +138,14 @@ class SQLGenerator:
                 message=f"OpenAI API request failed: {error_msg}",
                 details={"error": error_msg},
             ) from e
+        finally:
+            metrics.observe_llm_latency("sql_generation", time.monotonic() - llm_start)
+
+        # Capture token usage for the orchestrator and metrics
+        usage = response.usage
+        if usage is not None and usage.total_tokens > 0:
+            self.last_tokens_used = usage.total_tokens
+            metrics.increment_llm_tokens("sql_generation", usage.total_tokens)
 
         # Extract SQL from response
         if not response.choices:

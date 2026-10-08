@@ -11,6 +11,8 @@ from typing import Any, ClassVar
 
 from pydantic import BaseModel
 
+from pg_mcp.observability.tracing import get_request_id
+
 
 class LogRecord(BaseModel):
     """Structured log record model.
@@ -30,6 +32,33 @@ class LogRecord(BaseModel):
     message: str
     request_id: str | None = None
     extra: dict[str, Any] | None = None
+
+
+class RequestIdFilter(logging.Filter):
+    """Inject the request ID from the tracing context into every log record.
+
+    Records that already carry a ``request_id`` (explicit ``extra={...}``)
+    are left untouched, so callers can still override per-call.
+
+    Example:
+        >>> handler = logging.StreamHandler()
+        >>> handler.addFilter(RequestIdFilter())
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        """Attach the context request ID if the record does not have one.
+
+        Args:
+            record: The log record being emitted.
+
+        Returns:
+            bool: Always True to allow the record through.
+        """
+        if not hasattr(record, "request_id"):
+            request_id = get_request_id()
+            if request_id is not None:
+                record.request_id = request_id
+        return True
 
 
 class SensitiveDataFilter(logging.Filter):
@@ -269,6 +298,9 @@ def configure_logging(
         formatter = TextFormatter(datefmt="%Y-%m-%d %H:%M:%S")
 
     handler.setFormatter(formatter)
+
+    # Propagate the tracing context request ID into every record
+    handler.addFilter(RequestIdFilter())
 
     # Add sensitive data filter
     if enable_sensitive_filter:

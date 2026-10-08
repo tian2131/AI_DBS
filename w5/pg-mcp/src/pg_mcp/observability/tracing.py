@@ -1,16 +1,16 @@
 """Request tracing and context propagation for PostgreSQL MCP Server.
 
 This module provides request ID generation and context propagation throughout
-the query processing pipeline, enabling end-to-end tracing of requests.
+the query processing pipeline via context variables, enabling end-to-end
+tracing of requests. A logging filter (see observability.logging) injects the
+current request ID into every log record automatically.
 """
 
 import contextvars
-import logging
 import uuid
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from functools import wraps
-from typing import Any, ParamSpec, TypeVar
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -18,10 +18,6 @@ from pydantic import BaseModel
 _request_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_id", default=None
 )
-
-# Type variables for decorators
-P = ParamSpec("P")
-R = TypeVar("R")
 
 
 class TraceContext(BaseModel):
@@ -106,7 +102,7 @@ async def request_context(request_id: str | None = None) -> AsyncIterator[str]:
 
     Example:
         >>> async with request_context() as req_id:
-        ...     logger.info("Processing request", extra={"request_id": req_id})
+        ...     logger.info("Processing request")
         ...     await some_operation()
     """
     if request_id is None:
@@ -117,189 +113,3 @@ async def request_context(request_id: str | None = None) -> AsyncIterator[str]:
         yield request_id
     finally:
         _request_id_var.reset(token)
-
-
-def trace_async(
-    operation: str | None = None,
-) -> Callable[[Callable[P, Awaitable[R]]], Callable[P, Awaitable[R]]]:
-    """Decorator to trace async functions with request ID.
-
-    Automatically injects request_id into log records and ensures
-    context propagation through async calls.
-
-    Args:
-        operation: Optional operation name. If not provided, uses function name.
-
-    Returns:
-        Decorated function that maintains request context.
-
-    Example:
-        >>> @trace_async(operation="generate_sql")
-        ... async def generate_sql(question: str) -> str:
-        ...     logger.info("Generating SQL", extra={"question": question})
-        ...     return "SELECT 1"
-    """
-
-    def decorator(func: Callable[P, Awaitable[R]]) -> Callable[P, Awaitable[R]]:
-        op_name = operation or func.__name__
-
-        @wraps(func)
-        async def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            request_id = get_request_id()
-
-            if request_id:
-                # Create a log adapter that adds request_id to all log records
-                old_factory = logging.getLogRecordFactory()
-
-                def record_factory(*factory_args: Any, **factory_kwargs: Any) -> logging.LogRecord:
-                    record = old_factory(*factory_args, **factory_kwargs)
-                    record.request_id = request_id
-                    record.operation = op_name
-                    return record
-
-                logging.setLogRecordFactory(record_factory)
-
-                try:
-                    result = await func(*args, **kwargs)
-                    return result
-                finally:
-                    logging.setLogRecordFactory(old_factory)
-            else:
-                # No request context, just execute
-                return await func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
-
-
-def trace_sync(
-    operation: str | None = None,
-) -> Callable[[Callable[P, R]], Callable[P, R]]:
-    """Decorator to trace synchronous functions with request ID.
-
-    Similar to trace_async but for synchronous functions.
-
-    Args:
-        operation: Optional operation name. If not provided, uses function name.
-
-    Returns:
-        Decorated function that maintains request context.
-
-    Example:
-        >>> @trace_sync(operation="validate_sql")
-        ... def validate_sql(sql: str) -> bool:
-        ...     logger.info("Validating SQL", extra={"sql": sql})
-        ...     return True
-    """
-
-    def decorator(func: Callable[P, R]) -> Callable[P, R]:
-        op_name = operation or func.__name__
-
-        @wraps(func)
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            request_id = get_request_id()
-
-            if request_id:
-                old_factory = logging.getLogRecordFactory()
-
-                def record_factory(*factory_args: Any, **factory_kwargs: Any) -> logging.LogRecord:
-                    record = old_factory(*factory_args, **factory_kwargs)
-                    record.request_id = request_id
-                    record.operation = op_name
-                    return record
-
-                logging.setLogRecordFactory(record_factory)
-
-                try:
-                    result = func(*args, **kwargs)
-                    return result
-                finally:
-                    logging.setLogRecordFactory(old_factory)
-            else:
-                return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator
-
-
-class TracingLogger:
-    """Logger wrapper that automatically includes request context.
-
-    This class wraps the standard logger to automatically include
-    request_id and operation name in all log messages.
-
-    Example:
-        >>> logger = TracingLogger(__name__)
-        >>> async with request_context():
-        ...     logger.info("Processing query", database="mydb")
-    """
-
-    def __init__(self, name: str):
-        """Initialize tracing logger.
-
-        Args:
-            name: Logger name (typically module name).
-        """
-        self._logger = logging.getLogger(name)
-
-    def _log(self, level: int, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Internal log method that adds request context.
-
-        Args:
-            level: Log level.
-            msg: Log message.
-            *args: Positional arguments for message formatting.
-            **kwargs: Keyword arguments including 'extra' for additional fields.
-        """
-        extra = kwargs.pop("extra", {})
-        request_id = get_request_id()
-
-        # Only add request_id if not already present
-        if request_id and "request_id" not in extra:
-            extra["request_id"] = request_id
-
-        kwargs["extra"] = extra
-        self._logger.log(level, msg, *args, **kwargs)
-
-    def debug(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log a debug message."""
-        self._log(logging.DEBUG, msg, *args, **kwargs)
-
-    def info(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log an info message."""
-        self._log(logging.INFO, msg, *args, **kwargs)
-
-    def warning(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log a warning message."""
-        self._log(logging.WARNING, msg, *args, **kwargs)
-
-    def error(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log an error message."""
-        self._log(logging.ERROR, msg, *args, **kwargs)
-
-    def critical(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log a critical message."""
-        self._log(logging.CRITICAL, msg, *args, **kwargs)
-
-    def exception(self, msg: str, *args: Any, **kwargs: Any) -> None:
-        """Log an exception message with traceback."""
-        kwargs["exc_info"] = True
-        self._log(logging.ERROR, msg, *args, **kwargs)
-
-
-def get_tracing_logger(name: str) -> TracingLogger:
-    """Get a tracing logger instance.
-
-    Args:
-        name: Logger name (typically __name__).
-
-    Returns:
-        TracingLogger instance.
-
-    Example:
-        >>> logger = get_tracing_logger(__name__)
-        >>> logger.info("Operation started")
-    """
-    return TracingLogger(name)

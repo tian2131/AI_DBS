@@ -117,6 +117,60 @@ class TestSchemaCache:
             assert result == sample_schema
             assert cache.get("test_db") is None
 
+    @pytest.mark.asyncio
+    async def test_load_evicts_oldest_entry_when_max_size_reached(
+        self, mock_pool: Mock, sample_schema: DatabaseSchema
+    ):
+        """Test loading a new key evicts the oldest entry at max_size."""
+        config = CacheConfig(schema_ttl=3600, max_size=2, enabled=True)
+        cache = SchemaCache(config)
+
+        # Pre-fill cache to max_size with "old_db" as the oldest entry
+        cache._cache["old_db"] = sample_schema
+        cache._cache_timestamps["old_db"] = datetime.now(UTC) - timedelta(seconds=120)
+        cache._cache["new_db"] = sample_schema
+        cache._cache_timestamps["new_db"] = datetime.now(UTC)
+
+        third_schema = DatabaseSchema(database_name="third_db", tables=[], version="15.0")
+
+        with patch("pg_mcp.cache.schema_cache.SchemaIntrospector") as mock_introspector_class:
+            mock_introspector = AsyncMock()
+            mock_introspector.introspect.return_value = third_schema
+            mock_introspector_class.return_value = mock_introspector
+
+            result = await cache.load("third_db", mock_pool)
+
+        assert result == third_schema
+        # Oldest entry evicted, newer entry and new key retained
+        assert "old_db" not in cache._cache
+        assert "old_db" not in cache._cache_timestamps
+        assert "new_db" in cache._cache
+        assert cache.get("third_db") == third_schema
+
+    @pytest.mark.asyncio
+    async def test_load_existing_key_does_not_evict(
+        self, mock_pool: Mock, sample_schema: DatabaseSchema
+    ):
+        """Test reloading an existing key at max_size does not evict anything."""
+        config = CacheConfig(schema_ttl=3600, max_size=2, enabled=True)
+        cache = SchemaCache(config)
+
+        cache._cache["old_db"] = sample_schema
+        cache._cache_timestamps["old_db"] = datetime.now(UTC) - timedelta(seconds=120)
+        cache._cache["new_db"] = sample_schema
+        cache._cache_timestamps["new_db"] = datetime.now(UTC)
+
+        with patch("pg_mcp.cache.schema_cache.SchemaIntrospector") as mock_introspector_class:
+            mock_introspector = AsyncMock()
+            mock_introspector.introspect.return_value = sample_schema
+            mock_introspector_class.return_value = mock_introspector
+
+            await cache.load("old_db", mock_pool)
+
+        # Both entries still present, size stays within max_size
+        assert set(cache._cache.keys()) == {"old_db", "new_db"}
+        assert set(cache._cache_timestamps.keys()) == {"old_db", "new_db"}
+
     def test_get_cache_age_returns_none_when_not_cached(self, cache: SchemaCache):
         """Test that get_cache_age returns None for non-cached database."""
         age = cache.get_cache_age("nonexistent_db")

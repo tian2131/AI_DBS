@@ -27,6 +27,13 @@ def _nested_config(env_prefix: str) -> SettingsConfigDict:
     )
 
 
+def _split_csv(value: str | list[str]) -> list[str]:
+    """Split a comma-separated string into a list; pass lists through unchanged."""
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return value
+
+
 class DatabaseConfig(BaseSettings):
     """PostgreSQL database connection configuration."""
 
@@ -111,6 +118,20 @@ class SecurityConfig(BaseSettings):
         ],
         description="List of blocked PostgreSQL functions",
     )
+    # NoDecode: same comma-separated handling as blocked_functions.
+    blocked_tables: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description="Table names that queries must not access",
+    )
+    blocked_columns: Annotated[list[str], NoDecode] = Field(
+        default_factory=list,
+        description="Column names that queries must not reference",
+    )
+    allow_explain: bool = Field(
+        default=False,
+        description="Allow EXPLAIN statements. Note: the inner query of an EXPLAIN "
+        "is not validated; safety relies on read-only execution transactions.",
+    )
     max_rows: int = Field(default=10000, ge=1, le=100000, description="Maximum rows to return")
     max_execution_time: float = Field(
         default=30.0, ge=1.0, le=300.0, description="Maximum query execution time in seconds"
@@ -122,13 +143,13 @@ class SecurityConfig(BaseSettings):
         default="public", description="Safe search_path to set during query execution"
     )
 
-    @field_validator("blocked_functions", mode="before")
+    @field_validator(
+        "blocked_functions", "blocked_tables", "blocked_columns", mode="before"
+    )
     @classmethod
-    def parse_blocked_functions(cls, v: str | list[str]) -> list[str]:
-        """Parse comma-separated string or list."""
-        if isinstance(v, str):
-            return [f.strip() for f in v.split(",") if f.strip()]
-        return v
+    def parse_csv_list(cls, v: str | list[str]) -> list[str]:
+        """Parse a comma-separated string (or pass through a list)."""
+        return _split_csv(v)
 
 
 class ValidationConfig(BaseSettings):
@@ -185,6 +206,18 @@ class ResilienceConfig(BaseSettings):
     )
     circuit_breaker_timeout: float = Field(
         default=60.0, ge=10.0, le=300.0, description="Circuit breaker timeout in seconds"
+    )
+    query_concurrency: int = Field(
+        default=10, ge=1, description="Maximum concurrent query executions"
+    )
+    llm_concurrency: int = Field(
+        default=5, ge=1, description="Maximum concurrent LLM API calls"
+    )
+    rate_limit_wait: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=60.0,
+        description="Seconds to wait for a concurrency slot before rejecting the request",
     )
 
 

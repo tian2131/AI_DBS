@@ -143,6 +143,14 @@ class ErrorDetail(BaseModel):
     message: str = Field(..., description="Human-readable error message")
     details: dict[str, Any] | None = Field(None, description="Additional error context")
 
+    def to_dict(self) -> dict[str, Any]:
+        """Serialize the error detail to a plain dictionary.
+
+        Returns:
+            dict[str, Any]: Dict containing code, message and details keys.
+        """
+        return self.model_dump()
+
 
 class QueryResponse(BaseModel):
     """Complete query response to client."""
@@ -156,21 +164,6 @@ class QueryResponse(BaseModel):
         default=100, ge=0, le=100, description="Confidence score of generated SQL (0-100)"
     )
     tokens_used: int | None = Field(None, ge=0, description="LLM tokens used for generation")
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert response to dictionary for MCP tool return.
-
-        Returns:
-            dict: Dictionary representation compatible with MCP protocol.
-        """
-        # Use model_dump but ensure tokens_used is always present
-        result = self.model_dump(exclude_none=False)
-
-        # Ensure tokens_used is always present (use 0 if None)
-        if result.get("tokens_used") is None:
-            result["tokens_used"] = 0
-
-        return result
 
     @field_validator("data")
     @classmethod
@@ -212,9 +205,15 @@ class QueryResponse(BaseModel):
         return v
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert response to dictionary.
+        """Convert response to dictionary for MCP tool return.
+
+        None-valued fields are omitted; ``tokens_used`` is always present
+        (0 when unknown) to keep the client-visible shape stable.
 
         Returns:
-            dict: Dictionary representation of query response.
+            dict: Dictionary representation compatible with MCP protocol.
         """
-        return self.model_dump(exclude_none=True)
+        result = self.model_dump(exclude_none=True)
+        if result.get("tokens_used") is None:
+            result["tokens_used"] = 0
+        return result
